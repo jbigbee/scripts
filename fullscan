@@ -1,0 +1,102 @@
+#############################################################
+# Purpose - Discovery and Enumeration of large scale networks
+# Requirements - Space Delimited (" ") file of vlanIDs, 
+# 	       Network Addresses and CIDR.
+# 	       - List of known larger subnets in which the vlans 
+# 	       reside.
+# 	       - DNS server IP
+# Notes - $vlans can/will be replaced by user to supply all
+#	required information. 
+#	- $dnsserver variable set to dns server of local network
+#	to pull hostnames of devices scaned on the network.
+#	-$big is used to determine ALL ip addresses that are up
+#	within a large subnet. This is user defined also.
+#	- nmap file output will be placed in the designated vlan
+#	folder by given vlan ID
+#	- This script operates under the premise that you have a 
+#	list of known vlans within a large subnet, and need to scan
+#	all up IPs, while maintaining vlan id association. All 
+#	ip IPs not in a known vlan will be assigned the vlan id 0.
+##############################################################
+#!/bin/bash
+
+#USER DEFINED VARIABLES
+vlanl=vlanlist
+dnssrvr=129.0.101.4
+big=bigscanlist
+
+#create ipchecklist. Used to verify if an IP address has been scanned
+#or not. 
+touch ipchecklist
+
+##Convert filename into comma delimited variable
+listcsv1=`sed 's/ /,/g' $vlanl`
+for i in $listcsv1; do
+
+	##variable declaration.
+	ipcidr=`echo $i | awk -F "," '{print $2"/"$3}'`
+
+	##nmap scan - ping sweep for discovery. Output goes to
+	##"iplist" which is then used for further scans.
+	nmap -n -sn -PE $ipcidr -oN temp
+	grep "report" temp | awk '{print $5}' >> smalliplist
+
+done
+
+##Begin large discovery subnet scan for all up IP hosts 
+##Generates "allupiplist". 
+nmap -n -sn -PE $big -oN bigtemp
+grep "report" temp | awk '{print $5}' >> bigiplist
+for x in `cat bigbiplist`; do
+	echo "0 $x 32" >> bigvlanlist
+done
+cat $vlanl bigvlanlist  > finalvlan
+vlans=finalvlan
+
+#create iplist used for enumeration
+echo smalliplist bigiplist > iplist
+
+##Convert filename into comma delimited variable
+listcsv=`sed 's/ /,/g' $vlans`
+for i in $listcsv; do
+
+	##variable declaration.
+	vlan=`echo $i | awk -F "," '{print $1}'`
+	ipcidr=`echo $i | awk -F "," '{print $2"/"$3}'`
+	filename=`echo $i | awk -F "," '{print $2"-"$3}'`
+	ipaddr=`echo $i | awk -F "," '{print S2}'`
+	
+	##if-then-else statement to identify if IP has already
+	#been added to the "ipchecklist". If $ipaddr exists in 
+	#"ipchecklist, continue next iteration (ip addr), else 
+	#perform full scans
+	if grep -Fxq $ipaddr ipchecklist
+	then 
+		continue
+	else	
+		echo $ipaddr >> ipchecklist		
+
+		##Create folder based on vlanID and move into it. 
+		##This creates a cleaner workspace for networks with
+		##multiple vlans
+		mkdir $vlan 2>/dev/null 
+		cd $vlan
+
+		##nmap scan - Syn Stealth with UDP. Input comes from "iplist"
+		##Scans will appear from port 88, with output based on scan type.
+		nmap -sS -sU --dns-server $dnssrvr -iL iplist -g 88 -oA $filename-sS
+		nmap -sA --dns-server $dnssrvr -iL iplist -g 88 -oA $filename-sA
+	fi
+
+	##Back out to script root directory to continue scans
+	cd .. 
+done
+
+#remove temp files as they are no longer needed.
+rm bigtemp
+rm temp
+
+
+
+
+
